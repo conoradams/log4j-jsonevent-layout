@@ -16,172 +16,254 @@ import java.util.TimeZone;
 
 public class JSONEventLayoutV1 extends Layout {
 
-    private boolean locationInfo = false;
-    private String customUserFields;
+	private boolean locationInfo = false;
+	private String customUserFields;
+	private String renameFields;
+	private Map<String, String> renameMapping;
+	private boolean keepOriginalMaps = true;
 
-    private boolean ignoreThrowable = false;
+	private boolean ignoreThrowable = false;
 
-    private boolean activeIgnoreThrowable = ignoreThrowable;
-    private String hostname = new HostData().getHostName();
-    private String threadName;
-    private long timestamp;
-    private String ndc;
-    private Map mdc;
-    private LocationInfo info;
-    private HashMap<String, Object> exceptionInformation;
-    private static Integer version = 1;
+	@SuppressWarnings("unused")
+	private boolean activeIgnoreThrowable = ignoreThrowable;
+	private String hostname = new HostData().getHostName();
+	private String threadName;
+	private long timestamp;
+	private String ndc;
+	@SuppressWarnings("rawtypes")
+	private Map mdc;
+	private LocationInfo info;
+	private HashMap<String, Object> exceptionInformation;
+	private static Integer version = 1;
 
+	private JSONObject logstashEvent;
 
-    private JSONObject logstashEvent;
+	public static final TimeZone UTC = TimeZone.getTimeZone("UTC");
+	public static final FastDateFormat ISO_DATETIME_TIME_ZONE_FORMAT_WITH_MILLIS = FastDateFormat
+			.getInstance("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", UTC);
+	public static final String ADDITIONAL_DATA_PROPERTY = "net.logstash.log4j.JSONEventLayoutV1.UserFields";
 
-    public static final TimeZone UTC = TimeZone.getTimeZone("UTC");
-    public static final FastDateFormat ISO_DATETIME_TIME_ZONE_FORMAT_WITH_MILLIS = FastDateFormat.getInstance("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", UTC);
-    public static final String ADDITIONAL_DATA_PROPERTY = "net.logstash.log4j.JSONEventLayoutV1.UserFields";
+	public static String dateFormat(long timestamp) {
+		return ISO_DATETIME_TIME_ZONE_FORMAT_WITH_MILLIS.format(timestamp);
+	}
 
-    public static String dateFormat(long timestamp) {
-        return ISO_DATETIME_TIME_ZONE_FORMAT_WITH_MILLIS.format(timestamp);
-    }
+	/**
+	 * For backwards compatibility, the default is to generate location information
+	 * in the log messages.
+	 */
+	public JSONEventLayoutV1() {
+		this(true);
+	}
 
-    /**
-     * For backwards compatibility, the default is to generate location information
-     * in the log messages.
-     */
-    public JSONEventLayoutV1() {
-        this(true);
-    }
+	/**
+	 * Creates a layout that optionally inserts location information into log
+	 * messages.
+	 *
+	 * @param locationInfo
+	 *            whether or not to include location information in the log
+	 *            messages.
+	 */
+	public JSONEventLayoutV1(boolean locationInfo) {
+		this.locationInfo = locationInfo;
+	}
 
-    /**
-     * Creates a layout that optionally inserts location information into log messages.
-     *
-     * @param locationInfo whether or not to include location information in the log messages.
-     */
-    public JSONEventLayoutV1(boolean locationInfo) {
-        this.locationInfo = locationInfo;
-    }
+	public String format(LoggingEvent loggingEvent) {
+		threadName = loggingEvent.getThreadName();
+		timestamp = loggingEvent.getTimeStamp();
+		exceptionInformation = new HashMap<String, Object>();
+		mdc = loggingEvent.getProperties();
+		ndc = loggingEvent.getNDC();
 
-    public String format(LoggingEvent loggingEvent) {
-        threadName = loggingEvent.getThreadName();
-        timestamp = loggingEvent.getTimeStamp();
-        exceptionInformation = new HashMap<String, Object>();
-        mdc = loggingEvent.getProperties();
-        ndc = loggingEvent.getNDC();
+		logstashEvent = new JSONObject();
+		String whoami = this.getClass().getSimpleName();
 
-        logstashEvent = new JSONObject();
-        String whoami = this.getClass().getSimpleName();
+		/**
+		 * Initialise the rename fields, if defined
+		 */
+		if (getRenameFields() != null) {
+			String renameFlds = getRenameFields();
+			LogLog.debug("[" + whoami + "] Got user data from log4j property: " + renameFlds);
+			initRenameFields(renameFlds);
+		} else {
+			renameMapping = new HashMap<String, String>();
+		}
 
-        /**
-         * All v1 of the event format requires is
-         * "@timestamp" and "@version"
-         * Every other field is arbitrary
-         */
-        logstashEvent.put("@version", version);
-        logstashEvent.put("@timestamp", dateFormat(timestamp));
+		/**
+		 * All v1 of the event format requires is "@timestamp" and "@version" Every
+		 * other field is arbitrary
+		 */
+		addEventData("@version", version);
+		addEventData("@timestamp", dateFormat(timestamp));
 
-        /**
-         * Extract and add fields from log4j config, if defined
-         */
-        if (getUserFields() != null) {
-            String userFlds = getUserFields();
-            LogLog.debug("["+whoami+"] Got user data from log4j property: "+ userFlds);
-            addUserFields(userFlds);
-        }
+		/**
+		 * Extract and add fields from log4j config, if defined
+		 */
+		if (getUserFields() != null) {
+			String userFlds = getUserFields();
+			LogLog.debug("[" + whoami + "] Got user data from log4j property: " + userFlds);
+			addUserFields(userFlds);
+		}
 
-        /**
-         * Extract fields from system properties, if defined
-         * Note that CLI props will override conflicts with log4j config
-         */
-        if (System.getProperty(ADDITIONAL_DATA_PROPERTY) != null) {
-            if (getUserFields() != null) {
-                LogLog.warn("["+whoami+"] Loading UserFields from command-line. This will override any UserFields set in the log4j configuration file");
-            }
-            String userFieldsProperty = System.getProperty(ADDITIONAL_DATA_PROPERTY);
-            LogLog.debug("["+whoami+"] Got user data from system property: " + userFieldsProperty);
-            addUserFields(userFieldsProperty);
-        }
+		/**
+		 * Extract fields from system properties, if defined Note that CLI props will
+		 * override conflicts with log4j config
+		 */
+		if (System.getProperty(ADDITIONAL_DATA_PROPERTY) != null) {
+			if (getUserFields() != null) {
+				LogLog.warn("[" + whoami
+						+ "] Loading UserFields from command-line. This will override any UserFields set in the log4j configuration file");
+			}
+			String userFieldsProperty = System.getProperty(ADDITIONAL_DATA_PROPERTY);
+			LogLog.debug("[" + whoami + "] Got user data from system property: " + userFieldsProperty);
+			addUserFields(userFieldsProperty);
+		}
 
-        /**
-         * Now we start injecting our own stuff.
-         */
-        logstashEvent.put("source_host", hostname);
-        logstashEvent.put("message", loggingEvent.getRenderedMessage());
+		/**
+		 * Now we start injecting our own stuff.
+		 */
+		logstashEvent.put("source_host", hostname);
+		logstashEvent.put("message", loggingEvent.getRenderedMessage());
 
-        if (loggingEvent.getThrowableInformation() != null) {
-            final ThrowableInformation throwableInformation = loggingEvent.getThrowableInformation();
-            if (throwableInformation.getThrowable().getClass().getCanonicalName() != null) {
-                exceptionInformation.put("exception_class", throwableInformation.getThrowable().getClass().getCanonicalName());
-            }
-            if (throwableInformation.getThrowable().getMessage() != null) {
-                exceptionInformation.put("exception_message", throwableInformation.getThrowable().getMessage());
-            }
-            if (throwableInformation.getThrowableStrRep() != null) {
-                String stackTrace = StringUtils.join(throwableInformation.getThrowableStrRep(), "\n");
-                exceptionInformation.put("stacktrace", stackTrace);
-            }
-            addEventData("exception", exceptionInformation);
-        }
+		if (loggingEvent.getThrowableInformation() != null) {
+			final ThrowableInformation throwableInformation = loggingEvent.getThrowableInformation();
+			if (throwableInformation.getThrowable().getClass().getCanonicalName() != null) {
+				exceptionInformation.put("exception_class",
+						throwableInformation.getThrowable().getClass().getCanonicalName());
+			}
+			if (throwableInformation.getThrowable().getMessage() != null) {
+				exceptionInformation.put("exception_message", throwableInformation.getThrowable().getMessage());
+			}
+			if (throwableInformation.getThrowableStrRep() != null) {
+				String stackTrace = StringUtils.join(throwableInformation.getThrowableStrRep(), "\n");
+				exceptionInformation.put("stacktrace", stackTrace);
+			}
+			addEventData("exception", exceptionInformation);
+		}
 
-        if (locationInfo) {
-            info = loggingEvent.getLocationInformation();
-            addEventData("file", info.getFileName());
-            addEventData("line_number", info.getLineNumber());
-            addEventData("class", info.getClassName());
-            addEventData("method", info.getMethodName());
-        }
+		if (locationInfo) {
+			info = loggingEvent.getLocationInformation();
+			addEventData("file", info.getFileName());
+			addEventData("line_number", info.getLineNumber());
+			addEventData("class", info.getClassName());
+			addEventData("method", info.getMethodName());
+		}
 
-        addEventData("logger_name", loggingEvent.getLoggerName());
-        addEventData("mdc", mdc);
-        addEventData("ndc", ndc);
-        addEventData("level", loggingEvent.getLevel().toString());
-        addEventData("thread_name", threadName);
+		addEventData("logger_name", loggingEvent.getLoggerName());
+		addEventData("mdc", mdc);
+		addEventData("ndc", ndc);
+		addEventData("level", loggingEvent.getLevel().toString());
+		addEventData("thread_name", threadName);
 
-        return logstashEvent.toString() + "\n";
-    }
+		return logstashEvent.toString() + "\n";
+	}
 
-    public boolean ignoresThrowable() {
-        return ignoreThrowable;
-    }
+	public boolean ignoresThrowable() {
+		return ignoreThrowable;
+	}
 
-    /**
-     * Query whether log messages include location information.
-     *
-     * @return true if location information is included in log messages, false otherwise.
-     */
-    public boolean getLocationInfo() {
-        return locationInfo;
-    }
+	/**
+	 * Query whether log messages include location information.
+	 *
+	 * @return true if location information is included in log messages, false
+	 *         otherwise.
+	 */
+	public boolean getLocationInfo() {
+		return locationInfo;
+	}
 
-    /**
-     * Set whether log messages should include location information.
-     *
-     * @param locationInfo true if location information should be included, false otherwise.
-     */
-    public void setLocationInfo(boolean locationInfo) {
-        this.locationInfo = locationInfo;
-    }
+	/**
+	 * Set whether log messages should include location information.
+	 *
+	 * @param locationInfo
+	 *            true if location information should be included, false otherwise.
+	 */
+	public void setLocationInfo(boolean locationInfo) {
+		this.locationInfo = locationInfo;
+	}
 
-    public String getUserFields() { return customUserFields; }
-    public void setUserFields(String userFields) { this.customUserFields = userFields; }
+	public String getUserFields() {
+		return customUserFields;
+	}
 
-    public void activateOptions() {
-        activeIgnoreThrowable = ignoreThrowable;
-    }
+	public void setUserFields(String userFields) {
+		this.customUserFields = userFields;
+	}
 
-    private void addUserFields(String data) {
-        if (null != data) {
-            String[] pairs = data.split(",");
-            for (String pair : pairs) {
-                String[] userField = pair.split(":", 2);
-                if (userField[0] != null) {
-                    String key = userField[0];
-                    String val = userField[1];
-                    addEventData(key, val);
-                }
-            }
-        }
-    }
-    private void addEventData(String keyname, Object keyval) {
-        if (null != keyval) {
-            logstashEvent.put(keyname, keyval);
-        }
-    }
+	public String getRenameFields() {
+		return renameFields;
+	}
+
+	public void setRenameFields(String renameFields) {
+		this.renameFields = renameFields;
+	}
+
+	public boolean getKeepOriginalMaps() {
+		return keepOriginalMaps;
+	}
+
+	public void setKeepOriginalMaps(boolean keepOriginalMaps) {
+		this.keepOriginalMaps = keepOriginalMaps;
+	}
+
+	public void activateOptions() {
+		activeIgnoreThrowable = ignoreThrowable;
+	}
+
+	private void addUserFields(String data) {
+		if (null != data) {
+			String[] pairs = data.split(",");
+			for (String pair : pairs) {
+				String[] userField = pair.split(":", 2);
+				if (userField[0] != null) {
+					String key = userField[0];
+					String val = userField[1];
+					addEventData(key, val);
+				}
+			}
+		}
+	}
+
+	private void initRenameFields(String data) {
+		if (null != data) {
+			renameMapping = new HashMap<String, String>();
+			String[] pairs = data.split(",");
+			for (String pair : pairs) {
+				String[] renameField = pair.split(":", 2);
+				if (renameField[0] != null) {
+					String key = renameField[0];
+					String val = renameField[1];
+					renameMapping.put(key, val);
+				}
+			}
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private void iterateOverMap(String keyname, Object keyval) {
+		try {
+			Map<String, Object> mapOfKeyval = (Map<String, Object>) keyval;
+			for (String s : mapOfKeyval.keySet()) {
+				String name = keyname + "-" + s;
+				if (mapOfKeyval.get(s) instanceof Map) {
+					iterateOverMap(name, mapOfKeyval.get(s));
+				} else {
+					addEventData(name, mapOfKeyval.get(s));
+				}
+			}
+		} catch (Exception e) {
+			LogLog.error("Error converting map to top level string", e);
+		}
+	}
+
+	private void addEventData(String keyname, Object keyval) {
+		if (null != keyval) {
+			if (keyval instanceof Map) {
+				iterateOverMap(keyname, keyval);
+			}
+			if (keyval instanceof String || getKeepOriginalMaps()) {
+				String name = (renameMapping.get(keyname) == null ? keyname : renameMapping.get(keyname));
+				logstashEvent.put(name, keyval);
+			}
+		}
+	}
 }
