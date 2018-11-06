@@ -181,9 +181,9 @@ to this (each level will be prepended to the start of the name and separated wit
   "class":"org.eclipse.jetty.examples.logging.EchoFormServlet",
   "something":{
     "foo":"bar",
-	"another_level":{
-	  "abc":"123"
-	}
+    "another_level":{
+      "abc":"123"
+    }
   },
   "exception-exception_class":"java.lang.IllegalArgumentException",
   "exception-exception_message":"Something broke!",
