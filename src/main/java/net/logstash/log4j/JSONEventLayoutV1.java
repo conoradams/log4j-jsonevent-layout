@@ -10,6 +10,7 @@ import org.apache.log4j.spi.LocationInfo;
 import org.apache.log4j.spi.LoggingEvent;
 import org.apache.log4j.spi.ThrowableInformation;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
@@ -37,6 +38,8 @@ public class JSONEventLayoutV1 extends Layout {
 	private static Integer version = 1;
 
 	private JSONObject logstashEvent;
+	private int maxDepthPerThrowable = -1;
+	private int maxLength = -1;
 
 	public static final TimeZone UTC = TimeZone.getTimeZone("UTC");
 	public static final FastDateFormat ISO_DATETIME_TIME_ZONE_FORMAT_WITH_MILLIS = FastDateFormat
@@ -125,20 +128,27 @@ public class JSONEventLayoutV1 extends Layout {
 		logstashEvent.put("message", loggingEvent.getRenderedMessage());
 
 		if (loggingEvent.getThrowableInformation() != null) {
-			final ThrowableInformation throwableInformation = loggingEvent.getThrowableInformation();
-			if (throwableInformation.getThrowable().getClass().getCanonicalName() != null) {
-				exceptionInformation.put("exception_class",
-						throwableInformation.getThrowable().getClass().getCanonicalName());
-			}
-			if (throwableInformation.getThrowable().getMessage() != null) {
-				exceptionInformation.put("exception_message", throwableInformation.getThrowable().getMessage());
-			}
-			if (throwableInformation.getThrowableStrRep() != null) {
-				String stackTrace = StringUtils.join(throwableInformation.getThrowableStrRep(), "\n");
-				exceptionInformation.put("stacktrace", stackTrace);
-			}
-			addEventData("exception", exceptionInformation);
-		}
+            final ThrowableInformation throwableInformation = loggingEvent.getThrowableInformation();
+            if (throwableInformation.getThrowable().getClass().getCanonicalName() != null) {
+                exceptionInformation.put("exception_class", throwableInformation.getThrowable().getClass().getCanonicalName());
+            }
+            if (throwableInformation.getThrowable().getMessage() != null) {
+                exceptionInformation.put("exception_message", throwableInformation.getThrowable().getMessage());
+            }
+            if (throwableInformation.getThrowableStrRep() != null) {
+            	String stackTrace;
+            	if (maxDepthPerThrowable != -1) {
+            		stackTrace = StringUtils.join(Arrays.copyOf(throwableInformation.getThrowableStrRep(),maxDepthPerThrowable), "\n");
+            	} else {
+            		stackTrace = StringUtils.join(throwableInformation.getThrowableStrRep(), "\n");
+            	}
+            	if (maxLength != -1) {
+            		stackTrace = StringUtils.substring(stackTrace, 0, maxLength);
+            	}          	
+                exceptionInformation.put("stacktrace", stackTrace);
+            }
+            addEventData("exception", exceptionInformation);
+        }
 
 		if (locationInfo) {
 			info = loggingEvent.getLocationInformation();
@@ -203,6 +213,22 @@ public class JSONEventLayoutV1 extends Layout {
 
 	public void setKeepOriginalMaps(boolean keepOriginalMaps) {
 		this.keepOriginalMaps = keepOriginalMaps;
+	}
+
+	public int getMaxDepthPerThrowable() {
+		return maxDepthPerThrowable;
+	}
+
+	public void setMaxDepthPerThrowable(int maxDepthPerThrowable) {
+		this.maxDepthPerThrowable = maxDepthPerThrowable;
+	}
+
+	public int getMaxLength() {
+		return maxLength;
+	}
+
+	public void setMaxLength(int maxLength) {
+		this.maxLength = maxLength;
 	}
 
 	public void activateOptions() {
